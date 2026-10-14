@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>T225 | Railway Level-Crossing Violation & Track Intrusion Surveillance</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body class="dark-theme">
+  <!-- Top Navigation & System Status Bar -->
+  <header class="app-header">
+    <div class="header-brand">
+      <div class="radar-indicator">
+        <span class="radar-dot"></span>
+        <span class="radar-wave"></span>
+      </div>
+      <div class="brand-text">
+        <h1>RAIL-SENTINEL <span class="tag">T225 ROC</span></h1>
+        <p class="subtitle">Autonomous Level-Crossing Violation & Track Intrusion Platform</p>
+      </div>
+    </div>
+
+    <!-- Live Telemetry Badges -->
+    <div class="header-telemetry">
+      <div class="tele-item">
+        <span class="tele-label">SYSTEM</span>
+        <span id="tele-health" class="tele-value badge-green">ONLINE</span>
+      </div>
+      <div class="tele-item">
+        <span class="tele-label">PROCESSOR</span>
+        <span id="tele-status" class="tele-value badge-neutral">IDLE</span>
+      </div>
+      <div class="tele-item">
+        <span class="tele-label">BARRIER STATE</span>
+        <div class="barrier-toggle-group">
+          <button class="barrier-btn" data-state="OPEN">OPEN</button>
+          <button class="barrier-btn active" data-state="UNKNOWN">UNKNOWN</button>
+          <button class="barrier-btn" data-state="CLOSED">CLOSED</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Navigation Tabs -->
+  <nav class="nav-tabs">
+    <button class="tab-btn active" data-tab="tab-surveillance">Surveillance & Pipeline</button>
+    <button class="tab-btn" data-tab="tab-zones">Zone Configuration Studio</button>
+    <button class="tab-btn" data-tab="tab-events">Alerts & Violation Log <span id="badge-event-count" class="count-pill">0</span></button>
+    <button class="tab-btn" data-tab="tab-evidence">Evidence Vault <span id="badge-evidence-count" class="count-pill">0</span></button>
+    <button class="tab-btn" data-tab="tab-diagnostics">Model & System Diagnostics</button>
+  </nav>
+
+  <main class="app-main">
+    <!-- Quick Analytics Metric Cards -->
+    <section class="metrics-grid">
+      <div class="metric-card">
+        <div class="metric-icon alert-icon">⚠️</div>
+        <div class="metric-content">
+          <span class="metric-title">Active Alerts</span>
+          <span id="metric-active-alerts" class="metric-num">0</span>
+          <span class="metric-foot">Requiring Verification</span>
+        </div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-icon intrusion-icon">🚨</div>
+        <div class="metric-content">
+          <span class="metric-title">Track Intrusions</span>
+          <span id="metric-intrusions" class="metric-num">0</span>
+          <span class="metric-foot">Restricted Track Zone</span>
+        </div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-icon crossing-icon">🛑</div>
+        <div class="metric-content">
+          <span class="metric-title">Crossing Events</span>
+          <span id="metric-crossings" class="metric-num">0</span>
+          <span id="metric-barrier-note" class="metric-foot">Barrier: UNKNOWN</span>
+        </div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-icon detection-icon">🎯</div>
+        <div class="metric-content">
+          <span class="metric-title">Total Detections</span>
+          <span id="metric-detections" class="metric-num">0</span>
+          <span class="metric-foot">Tracked Instances</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 1: Surveillance & Control -->
+    <section id="tab-surveillance" class="tab-panel active">
+      <div class="panel-layout">
+        <!-- Left: Video Viewport & Overlays -->
+        <div class="video-container card-surface">
+          <div class="video-header">
+            <span class="panel-title">Surveillance Feed / Video Playback</span>
+            <div class="video-badges">
+              <span id="feed-resolution-badge" class="tech-badge">Resolution: --</span>
+              <span id="feed-fps-badge" class="tech-badge">FPS: --</span>
+            </div>
+          </div>
+
+          <div class="viewport-box">
+            <video id="surveillance-player" controls preload="metadata">
+              Your browser does not support HTML5 video streaming.
+            </video>
+            <div id="video-empty-state" class="empty-state">
+              <div class="empty-icon">📹</div>
+              <h3>No Video Stream Selected</h3>
+              <p>Select a pre-loaded railway video from the control console or upload a new surveillance clip.</p>
+            </div>
+          </div>
+
+          <!-- Processing Progress Bar -->
+          <div class="progress-container">
+            <div class="progress-meta">
+              <span id="progress-text">Inference Progress: 0% (Frame 0 / 0)</span>
+              <span id="progress-speed">Speed: 0.0 fps</span>
+            </div>
+            <div class="progress-track">
+              <div id="progress-fill" class="progress-fill" style="width: 0%;"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right: Control Panel -->
+        <aside class="control-container card-surface">
+          <h2 class="panel-title">Surveillance Controls</h2>
+
+          <div class="control-group">
+            <label class="control-label">Video Source</label>
+            <select id="video-selector" class="select-input">
+              <option value="">Loading available videos...</option>
+            </select>
+            <div class="upload-row">
+              <input type="file" id="video-upload-input" accept="video/mp4,video/avi,video/quicktime,video/x-matroska" style="display: none;">
+              <button id="btn-browse-upload" class="btn btn-secondary btn-full">⬆ Upload Custom Video</button>
+            </div>
+          </div>
+
+          <div class="control-group">
+            <label class="control-label">Inference Mode</label>
+            <select id="mode-selector" class="select-input">
+              <option value="hybrid" selected>Hybrid (best new.pt + Intruder Tracking)</option>
+              <option value="custom">Custom Checkpoint Only (best new.pt: crossing/signals/signs)</option>
+              <option value="coco">Intruder Detector Only (Pedestrians/Vehicles)</option>
+            </select>
+            <span class="control-hint">Hybrid detects railway infrastructure from best new.pt and tracks intruder bodies.</span>
+          </div>
+
+          <div class="control-group">
+            <div class="label-with-val">
+              <label class="control-label">Confidence Threshold</label>
+              <span id="conf-val-display" class="val-pill">0.10</span>
+            </div>
+            <input type="range" id="conf-slider" min="0.01" max="0.95" step="0.01" value="0.10" class="slider-input">
+          </div>
+
+          <div class="control-group">
+            <label class="control-label">Evidence Generation</label>
+            <label class="checkbox-label">
+              <input type="checkbox" id="check-evidence" checked>
+              <span>Auto-generate H.264 clips for confirmed events</span>
+            </label>
+          </div>
+
+          <div class="action-buttons">
+            <button id="btn-start-process" class="btn btn-primary">▶ Start Analysis</button>
+            <button id="btn-stop-process" class="btn btn-danger" disabled>⏹ Stop</button>
+          </div>
+
+          <div class="export-actions">
+            <button id="btn-dl-csv" class="btn btn-outline btn-full">📥 Download Detections CSV</button>
+            <button id="btn-dl-events-csv" class="btn btn-outline btn-full">📋 Download Events CSV</button>
+          </div>
+
+          <!-- Notification Banner -->
+          <div id="status-alert-box" class="alert-banner hidden"></div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- TAB 2: Zone Configuration Studio -->
+    <section id="tab-zones" class="tab-panel">
+      <div class="panel-layout">
+        <div class="card-surface zone-canvas-wrap">
+          <div class="video-header">
+            <span class="panel-title">Interactive Zone Editor (Click Canvas to Add Polygon Vertices)</span>
+            <div class="canvas-actions">
+              <button id="btn-fetch-frame" class="btn btn-secondary btn-sm">🔄 Capture Video Frame</button>
+              <button id="btn-clear-current-zone" class="btn btn-danger btn-sm">Clear Selected Points</button>
+            </div>
+          </div>
+
+          <div class="canvas-container">
+            <canvas id="zone-canvas" width="1280" height="720"></canvas>
+            <div id="canvas-overlay-instruction" class="canvas-instruction">
+              Click on the canvas to place polygon points. Polygons require at least 3 points.
+            </div>
+          </div>
+        </div>
+
+        <aside class="card-surface zone-sidebar">
+          <h2 class="panel-title">Configured Zones</h2>
+          <div id="zone-list-container" class="zone-list">
+            <!-- Dynamic Zone Cards -->
+          </div>
+
+          <div class="zone-editor-form">
+            <h3 class="subheading">Edit Active Zone</h3>
+            <div class="control-group">
+              <label class="control-label">Zone Name</label>
+              <input type="text" id="zone-name-input" class="text-input" placeholder="e.g. Danger Track Zone">
+            </div>
+            <div class="control-group">
+              <label class="control-label">Zone Type</label>
+              <select id="zone-type-select" class="select-input">
+                <option value="TRACK_INTRUSION">Track Intrusion Zone (High Risk)</option>
+                <option value="LEVEL_CROSSING">Level Crossing Conflict Zone</option>
+              </select>
+            </div>
+            <div class="control-group">
+              <label class="checkbox-label">
+                <input type="checkbox" id="zone-demo-checkbox">
+                <span>Mark as Unverified / Demo Polygon</span>
+              </label>
+            </div>
+            <div class="control-group">
+              <label class="control-label">Zone Color</label>
+              <input type="color" id="zone-color-input" value="#ef4444" class="color-picker">
+            </div>
+
+            <div class="zone-buttons">
+              <button id="btn-add-new-zone" class="btn btn-secondary btn-full">+ Create New Zone</button>
+              <button id="btn-save-zones" class="btn btn-primary btn-full">💾 Save Zone Configuration</button>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- TAB 3: Alerts & Violation Log -->
+    <section id="tab-events" class="tab-panel">
+      <div class="card-surface">
+        <div class="filter-bar">
+          <div class="filter-item">
+            <label class="filter-label">Filter Severity</label>
+            <select id="filter-severity" class="select-input">
+              <option value="">All Severities</option>
+              <option value="CRITICAL">CRITICAL</option>
+              <option value="HIGH">HIGH</option>
+              <option value="MEDIUM">MEDIUM</option>
+              <option value="LOW">LOW</option>
+            </select>
+          </div>
+          <div class="filter-item">
+            <label class="filter-label">Filter Event Type</label>
+            <select id="filter-type" class="select-input">
+              <option value="">All Types</option>
+              <option value="TRACK_INTRUSION">TRACK_INTRUSION</option>
+              <option value="CLOSED_BARRIER_CROSSING">CLOSED_BARRIER_CROSSING</option>
+              <option value="POTENTIAL_CROSSING_ALERT">POTENTIAL_CROSSING_ALERT</option>
+              <option value="CROSSING_TRANSIT_PERMITTED">CROSSING_TRANSIT_PERMITTED</option>
+            </select>
+          </div>
+          <button id="btn-refresh-events" class="btn btn-secondary">🔄 Refresh Log</button>
+        </div>
+
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Event ID</th>
+                <th>Time (Video)</th>
+                <th>Event Type</th>
+                <th>Object</th>
+                <th>Track ID</th>
+                <th>Confidence</th>
+                <th>Zone</th>
+                <th>Barrier State</th>
+                <th>Severity</th>
+                <th>Evidence</th>
+              </tr>
+            </thead>
+            <tbody id="events-table-body">
+              <tr>
+                <td colspan="10" class="text-center text-muted">No events recorded yet. Start processing to monitor for violations.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 4: Evidence Vault -->
+    <section id="tab-evidence" class="tab-panel">
+      <div class="card-surface">
+        <div class="panel-header-row">
+          <div>
+            <h2 class="panel-title">Validated Evidence Vault (H.264 Verified)</h2>
+            <p class="subtitle">Multi-frame video clips captured with detection overlays, danger zone boundaries, and surveillance badges.</p>
+          </div>
+          <button id="btn-refresh-evidence" class="btn btn-secondary">🔄 Refresh Clips</button>
+        </div>
+
+        <div id="evidence-grid" class="evidence-grid">
+          <div class="empty-state">
+            <div class="empty-icon">🗄️</div>
+            <h3>No Evidence Clips Generated Yet</h3>
+            <p>Evidence clips are automatically created when confirmed intrusions or violations meet temporal and cooldown thresholds.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 5: Model & System Diagnostics -->
+    <section id="tab-diagnostics" class="tab-panel">
+      <div class="diagnostics-grid">
+        <div class="card-surface diag-card">
+          <h2 class="panel-title">Trained YOLO Checkpoint Diagnostics</h2>
+          <table class="diag-table">
+            <tr><td>Model Path:</td><td id="diag-model-path" class="mono-text">Loading...</td></tr>
+            <tr><td>File Exists:</td><td id="diag-model-exists">--</td></tr>
+            <tr><td>Model Size:</td><td id="diag-model-size">--</td></tr>
+            <tr><td>Parameter Count:</td><td id="diag-model-params">--</td></tr>
+            <tr><td>Device Target:</td><td id="diag-device">--</td></tr>
+            <tr><td>CUDA Hardware:</td><td id="diag-cuda">--</td></tr>
+            <tr><td>Checkpoint Architecture:</td><td id="diag-arch">--</td></tr>
+          </table>
+
+          <h3 class="subheading" style="margin-top: 1.5rem;">Actual Model Classes (Ultralytics Names)</h3>
+          <div id="diag-classes-container" class="classes-pills">
+            <!-- Dynamic class tags -->
+          </div>
+        </div>
+
+        <div class="card-surface diag-card">
+          <h2 class="panel-title">System Architecture & Heuristic Specifications</h2>
+          <div class="rules-documentation">
+            <h4>1. Point-in-Zone Reference</h4>
+            <p>Object locations are evaluated using the <strong>bottom-center ground contact point</strong> <code>((x1+x2)/2, y2)</code>. This minimizes false positives compared to bounding box center or top coordinates.</p>
+
+            <h4>2. Temporal Confirmation & Debouncing</h4>
+            <p>Potential intrusions must be confirmed across <strong>3 consecutive frames</strong> inside the danger polygon before an event is logged, filtering out single-frame tracking noise.</p>
+
+            <h4>3. Alert Deduplication & Cooldown</h4>
+            <p>While an object continuously remains inside a restricted zone, subsequent duplicate alerts are suppressed for a cooldown period of <strong>10.0 seconds</strong>.</p>
+
+            <h4>4. Barrier State Safety Protocol</h4>
+            <p>When the barrier state is <code>UNKNOWN</code>, crossing entries are logged as <code>POTENTIAL_CROSSING_ALERT</code> with Medium risk and explicit notices that automated closed-barrier violation status cannot be confirmed.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Evidence Playback Modal -->
+  <div id="evidence-modal" class="modal hidden">
+    <div class="modal-backdrop"></div>
+    <div class="modal-window">
+      <div class="modal-header">
+        <h3 id="modal-title">Evidence Video Playback</h3>
+        <button id="btn-close-modal" class="modal-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <video id="modal-video-player" controls autoplay class="modal-video">
+          Your browser does not support HTML5 video streaming.
+        </video>
+        <div id="modal-metadata" class="modal-meta"></div>
+      </div>
+      <div class="modal-footer">
+        <a id="btn-download-clip" href="#" download class="btn btn-primary">⬇ Download Verified Clip (.mp4)</a>
+        <button id="btn-dismiss-modal" class="btn btn-secondary">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

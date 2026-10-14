@@ -1,0 +1,52 @@
+[
+  {
+    "id": "zone-track-01",
+    "name": "Railway Track Intrusion Zone (Active Rails)",
+    "zone_type": "TRACK_INTRUSION",
+    "points": [
+      {
+        "x": 0.05,
+        "y": 0.35
+      },
+      {
+        "x": 0.70,
+        "y": 0.35
+      },
+      {
+        "x": 0.75,
+        "y": 0.95
+      },
+      {
+        "x": 0.02,
+        "y": 0.95
+      }
+    ],
+    "is_demo": true,
+    "color": "#ef4444"
+  },
+  {
+    "id": "zone-crossing-01",
+    "name": "Level-Crossing Conflict Zone",
+    "zone_type": "LEVEL_CROSSING",
+    "points": [
+      {
+        "x": 0.40,
+        "y": 0.30
+      },
+      {
+        "x": 0.98,
+        "y": 0.30
+      },
+      {
+        "x": 0.98,
+        "y": 0.90
+      },
+      {
+        "x": 0.35,
+        "y": 0.90
+      }
+    ],
+    "is_demo": true,
+    "color": "#f59e0b"
+  }
+]

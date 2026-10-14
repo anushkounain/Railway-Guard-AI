@@ -1,0 +1,52 @@
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Environments
+venv/
+env/
+.venv/
+ENV/
+
+# Large model weights (keep external to git)
+*.pt
+*.pth
+*.onnx
+*.engine
+*.bin
+models/*.pt
+
+# Video files & large datasets
+*.mp4
+*.avi
+*.mov
+*.mkv
+data/*.mp4
+data/*.avi
+data/*.mov
+
+# Runtime outputs & databases
+data/*.db
+data/*.sqlite
+outputs/*.csv
+outputs/*.mp4
+evidence/*.mp4
+logs/*.log
+scratch_frames/
+
+# Keep directory structures
+!outputs/.gitkeep
+!evidence/.gitkeep
+!logs/.gitkeep
+!models/README.md
+!data/README.md
+
+# OS & IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+.env
