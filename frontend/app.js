@@ -9,13 +9,17 @@ const state = {
   activeTab: 'tab-surveillance',
   barrierState: 'UNKNOWN',
   processingStatus: 'IDLE',
+  feedMode: 'raw', // 'raw' or 'detection'
+  latestOutputVideo: null,
   zones: [],
   selectedZoneIndex: 0,
   activeNewPoints: [],
   availableVideos: [],
   selectedVideoPath: '',
   canvasFrameImg: null,
-  pollInterval: null
+  pollInterval: null,
+  liveFeedInterval: null,
+  lastCompletedFrame: null
 };
 
 // DOM Elements
@@ -35,12 +39,21 @@ const elements = {
   badgeEventCount: document.getElementById('badge-event-count'),
   badgeEvidenceCount: document.getElementById('badge-evidence-count'),
 
-  // Surveillance
+  // Surveillance Viewport
   videoSelector: document.getElementById('video-selector'),
   videoUploadInput: document.getElementById('video-upload-input'),
   btnBrowseUpload: document.getElementById('btn-browse-upload'),
   surveillancePlayer: document.getElementById('surveillance-player'),
+  liveProcessingFeed: document.getElementById('live-processing-feed'),
+  liveFeedBadge: document.getElementById('live-feed-badge'),
   videoEmptyState: document.getElementById('video-empty-state'),
+  btnFeedRaw: document.getElementById('btn-feed-raw'),
+  btnFeedDetection: document.getElementById('btn-feed-detection'),
+  feedResolutionBadge: document.getElementById('feed-resolution-badge'),
+  feedFpsBadge: document.getElementById('feed-fps-badge'),
+  btnDlAnnotatedVideo: document.getElementById('btn-dl-annotated-video'),
+
+  // Controls
   modeSelector: document.getElementById('mode-selector'),
   confSlider: document.getElementById('conf-slider'),
   confValDisplay: document.getElementById('conf-val-display'),
@@ -73,6 +86,10 @@ const elements = {
   btnRefreshEvents: document.getElementById('btn-refresh-events'),
   evidenceGrid: document.getElementById('evidence-grid'),
   btnRefreshEvidence: document.getElementById('btn-refresh-evidence'),
+  masterDetectionBanner: document.getElementById('master-detection-banner'),
+  masterDetectionName: document.getElementById('master-detection-name'),
+  btnPlayMaster: document.getElementById('btn-play-master'),
+  btnDlMaster: document.getElementById('btn-dl-master'),
 
   // Diagnostics
   diagModelPath: document.getElementById('diag-model-path'),
@@ -102,6 +119,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupEventListeners();
   await loadInitialData();
   startStatusPolling();
+  await checkLatestOutputVideo();
 });
 
 async function loadInitialData() {
@@ -131,6 +149,32 @@ function setupEventListeners() {
     });
   });
 
+  // Video Feed Mode Switcher (Raw vs Detection)
+  elements.btnFeedRaw.addEventListener('click', () => {
+    loadVideoPreview(state.selectedVideoPath, 'raw');
+  });
+
+  elements.btnFeedDetection.addEventListener('click', () => {
+    loadVideoPreview(null, 'detection');
+  });
+
+  // Master Detection Video from Evidence Vault
+  if (elements.btnPlayMaster) {
+    elements.btnPlayMaster.addEventListener('click', () => {
+      // Switch to surveillance tab and play detection video
+      elements.tabs.forEach(b => b.classList.remove('active'));
+      elements.tabPanels.forEach(p => p.classList.remove('active'));
+      const survTabBtn = document.querySelector('[data-tab="tab-surveillance"]');
+      if (survTabBtn) survTabBtn.classList.add('active');
+      document.getElementById('tab-surveillance').classList.add('active');
+      state.activeTab = 'tab-surveillance';
+      loadVideoPreview(null, 'detection');
+    });
+  }
+
+  // Player metadata updates (resolution, duration)
+  elements.surveillancePlayer.addEventListener('loadedmetadata', updatePlayerMetadata);
+
   // Barrier Toggle
   elements.barrierBtns.forEach(btn => {
     btn.addEventListener('click', async () => {
@@ -144,11 +188,12 @@ function setupEventListeners() {
     elements.confValDisplay.textContent = parseFloat(e.target.value).toFixed(2);
   });
 
-  // Video Selection
+  // Video Selection from dropdown
   elements.videoSelector.addEventListener('change', (e) => {
     state.selectedVideoPath = e.target.value;
     if (state.selectedVideoPath) {
-      elements.videoEmptyState.classList.add('hidden');
+      loadVideoPreview(state.selectedVideoPath, 'raw');
+      fetchSnapshotFrame();
     }
   });
 
@@ -185,6 +230,90 @@ function setupEventListeners() {
   elements.btnCloseModal.addEventListener('click', closeModal);
   elements.btnDismissModal.addEventListener('click', closeModal);
   elements.evidenceModal.querySelector('.modal-backdrop').addEventListener('click', closeModal);
+}
+
+// -------------------------------------------------------------
+// Video Loading & Preview Management
+// -------------------------------------------------------------
+
+function loadVideoPreview(videoPath, mode = 'raw') {
+  state.feedMode = mode;
+
+  // Hide live processing elements if active
+  if (elements.liveProcessingFeed) elements.liveProcessingFeed.classList.add('hidden');
+  if (elements.liveFeedBadge) elements.liveFeedBadge.classList.add('hidden');
+  elements.surveillancePlayer.classList.remove('hidden');
+
+  if (mode === 'raw') {
+    elements.btnFeedRaw.classList.add('active');
+    elements.btnFeedDetection.classList.remove('active');
+
+    const target = videoPath || state.selectedVideoPath;
+    if (!target) {
+      elements.videoEmptyState.classList.remove('hidden');
+      return;
+    }
+
+    elements.videoEmptyState.classList.add('hidden');
+    const streamUrl = `${API_BASE}/api/videos/stream?path=${encodeURIComponent(target)}`;
+    if (elements.surveillancePlayer.getAttribute('data-loaded-src') !== streamUrl) {
+      elements.surveillancePlayer.src = streamUrl;
+      elements.surveillancePlayer.setAttribute('data-loaded-src', streamUrl);
+      elements.surveillancePlayer.load();
+    }
+  } else if (mode === 'detection') {
+    elements.btnFeedRaw.classList.remove('active');
+    elements.btnFeedDetection.classList.add('active');
+
+    if (!state.latestOutputVideo) {
+      showAlert('No annotated detection video found yet. Run analysis to generate full detection recording.', 'info');
+      return;
+    }
+
+    elements.videoEmptyState.classList.add('hidden');
+    const detectionUrl = `${API_BASE}/api/outputs/video/${encodeURIComponent(state.latestOutputVideo)}`;
+    if (elements.surveillancePlayer.getAttribute('data-loaded-src') !== detectionUrl) {
+      elements.surveillancePlayer.src = detectionUrl;
+      elements.surveillancePlayer.setAttribute('data-loaded-src', detectionUrl);
+      elements.surveillancePlayer.load();
+      elements.surveillancePlayer.play().catch(() => {});
+    }
+  }
+}
+
+function updatePlayerMetadata() {
+  const p = elements.surveillancePlayer;
+  if (p.videoWidth && p.videoHeight) {
+    elements.feedResolutionBadge.textContent = `Resolution: ${p.videoWidth}x${p.videoHeight}`;
+  }
+  if (p.duration && !isNaN(p.duration)) {
+    const mins = Math.floor(p.duration / 60);
+    const secs = Math.floor(p.duration % 60);
+    elements.feedFpsBadge.textContent = `Duration: ${mins}:${secs.toString().padStart(2, '0')}`;
+  }
+}
+
+async function checkLatestOutputVideo() {
+  try {
+    const res = await fetch(`${API_BASE}/api/outputs/latest-video`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.filename) {
+        state.latestOutputVideo = data.filename;
+        if (elements.btnDlAnnotatedVideo) {
+          elements.btnDlAnnotatedVideo.href = `${API_BASE}/api/outputs/video/${data.filename}`;
+          elements.btnDlAnnotatedVideo.classList.remove('hidden');
+        }
+        if (elements.masterDetectionBanner) {
+          elements.masterDetectionBanner.classList.remove('hidden');
+          elements.masterDetectionName.textContent = data.filename;
+          elements.btnDlMaster.href = `${API_BASE}/api/outputs/video/${data.filename}`;
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('Check latest output video error:', e);
+  }
 }
 
 // -------------------------------------------------------------
@@ -230,10 +359,45 @@ function updateProcessingUI(data) {
 
   if (data.status === 'COMPLETED' && state.lastCompletedFrame !== data.total_frames) {
     state.lastCompletedFrame = data.total_frames;
-    showAlert('Processing complete! Output video, detections CSV, and evidence clips generated.', 'success');
+    
+    // Stop live frame feed
+    if (state.liveFeedInterval) {
+      clearInterval(state.liveFeedInterval);
+      state.liveFeedInterval = null;
+    }
+    if (elements.liveProcessingFeed) elements.liveProcessingFeed.classList.add('hidden');
+    if (elements.liveFeedBadge) elements.liveFeedBadge.classList.add('hidden');
+    elements.surveillancePlayer.classList.remove('hidden');
+
+    if (data.output_video_path) {
+      state.latestOutputVideo = data.output_video_path;
+      if (elements.btnDlAnnotatedVideo) {
+        elements.btnDlAnnotatedVideo.href = `${API_BASE}/api/outputs/video/${data.output_video_path}`;
+        elements.btnDlAnnotatedVideo.classList.remove('hidden');
+      }
+      if (elements.masterDetectionBanner) {
+        elements.masterDetectionBanner.classList.remove('hidden');
+        elements.masterDetectionName.textContent = data.output_video_path;
+        elements.btnDlMaster.href = `${API_BASE}/api/outputs/video/${data.output_video_path}`;
+      }
+
+      // Automatically switch player to the full detection video and play it
+      loadVideoPreview(null, 'detection');
+      showAlert('Processing complete! Displaying Full Annotated Detection Video with bounding boxes.', 'success');
+    } else {
+      showAlert('Processing complete! Output CSVs and evidence generated.', 'success');
+    }
+
     fetchEvents();
     fetchEvidence();
   } else if (data.status === 'ERROR') {
+    if (state.liveFeedInterval) {
+      clearInterval(state.liveFeedInterval);
+      state.liveFeedInterval = null;
+    }
+    if (elements.liveProcessingFeed) elements.liveProcessingFeed.classList.add('hidden');
+    if (elements.liveFeedBadge) elements.liveFeedBadge.classList.add('hidden');
+    elements.surveillancePlayer.classList.remove('hidden');
     showAlert(`Processing error: ${data.error_message}`, 'error');
   }
 }
@@ -278,16 +442,19 @@ async function fetchVideos() {
       return;
     }
 
-    state.availableVideos.forEach((v, idx) => {
+    state.availableVideos.forEach((v) => {
       const opt = document.createElement('option');
       opt.value = v.path;
       opt.textContent = `${v.name} (${v.size_mb} MB) [${v.source}]`;
       elements.videoSelector.appendChild(opt);
     });
 
-    state.selectedVideoPath = state.availableVideos[0].path;
+    if (!state.selectedVideoPath) {
+      state.selectedVideoPath = state.availableVideos[0].path;
+    }
     elements.videoSelector.value = state.selectedVideoPath;
-    elements.videoEmptyState.classList.add('hidden');
+    loadVideoPreview(state.selectedVideoPath, 'raw');
+    fetchSnapshotFrame();
   } catch (e) {
     console.error('Error fetching videos:', e);
   }
@@ -311,10 +478,12 @@ async function handleVideoUpload(e) {
       throw new Error(err.detail || 'Upload failed');
     }
     const data = await res.json();
-    showAlert(`Successfully uploaded ${data.filename}`, 'success');
+    showAlert(`Successfully uploaded ${data.filename}! Video preview ready.`, 'success');
+    state.selectedVideoPath = data.path;
     await fetchVideos();
     elements.videoSelector.value = data.path;
-    state.selectedVideoPath = data.path;
+    loadVideoPreview(data.path, 'raw');
+    fetchSnapshotFrame();
   } catch (err) {
     showAlert(`Upload error: ${err.message}`, 'error');
   }
@@ -345,6 +514,23 @@ async function startVideoProcessing() {
       throw new Error(err.detail || 'Failed to start processing');
     }
     showAlert('Inference pipeline launched in background.', 'info');
+
+    // Show live inference feed
+    elements.videoEmptyState.classList.add('hidden');
+    elements.surveillancePlayer.classList.add('hidden');
+    elements.liveProcessingFeed.classList.remove('hidden');
+    elements.liveFeedBadge.classList.remove('hidden');
+
+    if (state.liveFeedInterval) clearInterval(state.liveFeedInterval);
+    state.liveFeedInterval = setInterval(() => {
+      if (state.processingStatus === 'PROCESSING') {
+        elements.liveProcessingFeed.src = `${API_BASE}/api/processing/live-frame?t=${Date.now()}`;
+      } else {
+        clearInterval(state.liveFeedInterval);
+        state.liveFeedInterval = null;
+      }
+    }, 250);
+
   } catch (err) {
     showAlert(err.message, 'error');
   }
@@ -353,6 +539,10 @@ async function startVideoProcessing() {
 async function stopVideoProcessing() {
   try {
     await fetch(`${API_BASE}/api/processing/stop`, { method: 'POST' });
+    if (state.liveFeedInterval) {
+      clearInterval(state.liveFeedInterval);
+      state.liveFeedInterval = null;
+    }
     showAlert('Stop signal sent to video processor.', 'info');
   } catch (err) {
     showAlert(err.message, 'error');
@@ -463,7 +653,7 @@ async function saveZonesToBackend() {
 async function fetchSnapshotFrame() {
   try {
     const videoParam = state.selectedVideoPath ? `?video_path=${encodeURIComponent(state.selectedVideoPath)}` : '';
-    const imgUrl = `${API_BASE}/api/video-frame${videoParam}&frame_number=100`;
+    const imgUrl = `${API_BASE}/api/video-frame${videoParam}&frame_number=60`;
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.onload = () => {
@@ -548,7 +738,7 @@ function renderZoneCanvas() {
     ctx.setLineDash([]);
 
     // Draw vertex dots
-    z.points.forEach((p, pIdx) => {
+    z.points.forEach((p) => {
       ctx.beginPath();
       ctx.arc(p.x * w, p.y * h, isSelected ? 6 : 4, 0, Math.PI * 2);
       ctx.fillStyle = isSelected ? '#ffffff' : z.color;
@@ -660,7 +850,7 @@ function renderEvidenceGrid(clips) {
       <div class="empty-state">
         <div class="empty-icon">🗄️</div>
         <h3>No Evidence Clips Generated Yet</h3>
-        <p>Evidence clips are automatically generated for confirmed track intrusions and level-crossing violations.</p>
+        <p>Evidence clips are automatically created when confirmed intrusions or violations meet temporal and cooldown thresholds.</p>
       </div>
     `;
     return;

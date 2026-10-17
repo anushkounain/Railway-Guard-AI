@@ -143,8 +143,8 @@ class RailwayDetector:
         # 2. Intruder model inference (pedestrians, vehicles, etc.)
         if active_mode in ("coco", "hybrid") and self.coco_model is not None:
             try:
-                # Focus intruder model on humans, vehicles, bicycles, trains
-                intruder_conf = max(conf, 0.20)  # standard confidence for COCO
+                # Use configured confidence threshold directly
+                intruder_conf = conf
                 coco_res = self.coco_model.track(
                     source=frame,
                     persist=persist,

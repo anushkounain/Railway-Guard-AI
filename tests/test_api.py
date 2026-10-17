@@ -77,6 +77,9 @@ class TestAPIEndpoints(unittest.TestCase):
         # Should fail with 422 (Pydantic min_length validation) or 400
         self.assertIn(bad_res.status_code, (400, 422))
 
+        # 4. Restore original zones
+        self.client.put("/api/zones", json={"zones": zones})
+
     def test_barrier_state_toggle(self):
         for state in ["OPEN", "CLOSED", "UNKNOWN"]:
             res = self.client.put(f"/api/barrier-state?state={state}")
@@ -104,6 +107,24 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertEqual(res.status_code, 200)
         data = res.json()
         self.assertIn("videos", data)
+
+    def test_video_stream_not_found(self):
+        res = self.client.get("/api/videos/stream?path=nonexistent_file.mp4")
+        self.assertEqual(res.status_code, 404)
+
+    def test_output_latest_video(self):
+        res = self.client.get("/api/outputs/latest-video")
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertIn("available", data)
+
+    def test_output_video_stream_not_found(self):
+        res = self.client.get("/api/outputs/video/nonexistent_annotated.mp4")
+        self.assertEqual(res.status_code, 404)
+
+    def test_live_frame_endpoint(self):
+        res = self.client.get("/api/processing/live-frame")
+        self.assertIn(res.status_code, [200, 404])
 
 if __name__ == "__main__":
     unittest.main()

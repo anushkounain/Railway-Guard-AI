@@ -96,10 +96,17 @@
         <!-- Left: Video Viewport & Overlays -->
         <div class="video-container card-surface">
           <div class="video-header">
-            <span class="panel-title">Surveillance Feed / Video Playback</span>
+            <div class="video-header-left">
+              <span class="panel-title" style="margin-bottom: 0;">Surveillance Feed</span>
+              <div class="feed-mode-tabs">
+                <button id="btn-feed-raw" class="feed-mode-btn active" title="Show original uploaded footage">📹 Raw Video Preview</button>
+                <button id="btn-feed-detection" class="feed-mode-btn" title="Show full annotated video with bounding boxes and tracks">🎯 Detection Video (Annotated)</button>
+              </div>
+            </div>
             <div class="video-badges">
               <span id="feed-resolution-badge" class="tech-badge">Resolution: --</span>
               <span id="feed-fps-badge" class="tech-badge">FPS: --</span>
+              <a id="btn-dl-annotated-video" href="#" download class="btn btn-secondary btn-sm hidden" title="Download the full annotated detection video">⬇ Download Detection Video</a>
             </div>
           </div>
 
@@ -107,6 +114,8 @@
             <video id="surveillance-player" controls preload="metadata">
               Your browser does not support HTML5 video streaming.
             </video>
+            <img id="live-processing-feed" class="live-feed-img hidden" alt="Live Inference Feed">
+            <div id="live-feed-badge" class="live-feed-badge hidden">🔴 LIVE INFERENCE FEED</div>
             <div id="video-empty-state" class="empty-state">
               <div class="empty-icon">📹</div>
               <h3>No Video Stream Selected</h3>
@@ -305,6 +314,21 @@
           </div>
           <button id="btn-refresh-evidence" class="btn btn-secondary">🔄 Refresh Clips</button>
         </div>
+
+        <!-- Master Detection Video Banner -->
+        <div id="master-detection-banner" class="master-detection-banner hidden">
+          <div class="master-detection-info">
+            <span class="badge-tag">FULL ANNOTATED SURVEILLANCE VIDEO</span>
+            <h3 id="master-detection-name">detection_annotated_output.mp4</h3>
+            <p>Full-duration footage with bounding boxes, tracking IDs, trajectories, and danger zones across 100% of video frames.</p>
+          </div>
+          <div class="master-detection-actions">
+            <button id="btn-play-master" class="btn btn-primary">▶ Play Full Detection Video</button>
+            <a id="btn-dl-master" href="#" download class="btn btn-secondary">⬇ Download Master MP4</a>
+          </div>
+        </div>
+
+        <h3 class="vault-section-title">🚨 Incident Event Evidence Clips (Focused Pre/Post Incident Recordings)</h3>
 
         <div id="evidence-grid" class="evidence-grid">
           <div class="empty-state">

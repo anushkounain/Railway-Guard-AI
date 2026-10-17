@@ -6,10 +6,10 @@ import os
 import shutil
 from pathlib import Path
 from typing import List, Optional
-from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Response, status
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Response, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 import cv2
 
 from backend.config import (
@@ -72,6 +72,59 @@ def get_model_info():
 # Video Management Endpoints
 # -------------------------------------------------------------
 
+def stream_file_range(file_path: Path, request: Request):
+    """Serve video files with HTTP 206 Partial Content (Byte Range requests) for smooth browser seeking."""
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Video file not found.")
+
+    file_size = file_path.stat().st_size
+    range_header = request.headers.get("range")
+
+    if not range_header:
+        def iter_file():
+            with open(file_path, "rb") as f:
+                while chunk := f.read(1024 * 1024):
+                    yield chunk
+        return StreamingResponse(
+            iter_file(),
+            media_type="video/mp4",
+            headers={
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(file_size)
+            }
+        )
+
+    try:
+        range_val = range_header.replace("bytes=", "").strip()
+        parts = range_val.split("-")
+        start = int(parts[0]) if parts[0] else 0
+        end = int(parts[1]) if len(parts) > 1 and parts[1] else file_size - 1
+        end = min(end, file_size - 1)
+    except Exception:
+        start, end = 0, file_size - 1
+
+    content_length = (end - start) + 1
+
+    def iter_range():
+        with open(file_path, "rb") as f:
+            f.seek(start)
+            remaining = content_length
+            while remaining > 0:
+                chunk_size = min(1024 * 1024, remaining)
+                data = f.read(chunk_size)
+                if not data:
+                    break
+                remaining -= len(data)
+                yield data
+
+    headers = {
+        "Content-Range": f"bytes {start}-{end}/{file_size}",
+        "Accept-Ranges": "bytes",
+        "Content-Length": str(content_length),
+        "Content-Type": "video/mp4"
+    }
+    return StreamingResponse(iter_range(), status_code=206, headers=headers)
+
 @app.get("/api/videos")
 def list_videos():
     """List available videos from Downloads and local data folder."""
@@ -83,6 +136,7 @@ def list_videos():
         videos.append({
             "name": "18828999-uhd_4096_2160_60fps.mp4",
             "path": dl_video,
+            "stream_url": f"/api/videos/stream?path={dl_video}",
             "size_mb": round(size_mb, 1),
             "source": "Downloads"
         })
@@ -93,6 +147,7 @@ def list_videos():
         videos.append({
             "name": f.name,
             "path": str(f),
+            "stream_url": f"/api/videos/stream?name={f.name}",
             "size_mb": round(size_mb, 1),
             "source": "Uploaded"
         })
@@ -130,12 +185,55 @@ async def upload_video(file: UploadFile = File(...)):
         "message": "Video uploaded successfully",
         "filename": safe_name,
         "path": str(target_path),
+        "stream_url": f"/api/videos/stream?name={safe_name}",
         "width": w,
         "height": h,
         "fps": round(fps, 2),
         "total_frames": frames,
         "duration_sec": round(duration, 2)
     }
+
+@app.get("/api/videos/stream")
+def stream_video(request: Request, path: Optional[str] = None, name: Optional[str] = None):
+    """Stream raw or uploaded surveillance video with Range headers for HTML5 video seeking."""
+    target_path = None
+    if name:
+        target_path = DATA_DIR / Path(name).name
+    elif path:
+        p = Path(path)
+        if p.is_file():
+            target_path = p
+        else:
+            cand1 = DATA_DIR / p.name
+            cand2 = Path(r"C:\Users\91636\Downloads") / p.name
+            if cand1.is_file():
+                target_path = cand1
+            elif cand2.is_file():
+                target_path = cand2
+
+    if name or path:
+        if not target_path or not target_path.is_file():
+            raise HTTPException(status_code=404, detail="Requested video file not found.")
+    else:
+        dl = Path(r"C:\Users\91636\Downloads\18828999-uhd_4096_2160_60fps.mp4")
+        if dl.is_file():
+            target_path = dl
+        else:
+            mp4s = list(DATA_DIR.glob("*.mp4"))
+            if mp4s:
+                target_path = mp4s[0]
+            else:
+                raise HTTPException(status_code=404, detail="No video file found to stream.")
+
+    return stream_file_range(target_path, request)
+
+@app.get("/api/processing/live-frame")
+def get_live_frame():
+    """Retrieve the latest real-time frame with detection overlays during active video processing."""
+    frame_bytes = processor.get_latest_frame()
+    if not frame_bytes:
+        raise HTTPException(status_code=404, detail="No live frame currently available.")
+    return Response(content=frame_bytes, media_type="image/jpeg")
 
 @app.get("/api/video-frame")
 def get_video_frame(video_path: Optional[str] = None, frame_number: int = 0):
@@ -282,13 +380,45 @@ def list_evidence():
     return {"evidence_clips": clips, "count": len(clips)}
 
 @app.get("/api/evidence/{filename}")
-def stream_evidence_clip(filename: str):
-    """Stream evidence video clip with safe path validation."""
+def stream_evidence_clip(filename: str, request: Request):
+    """Stream evidence video clip with safe path validation and Range seeking."""
     safe_name = Path(filename).name
     file_path = EVIDENCE_DIR / safe_name
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Evidence clip not found")
-    return FileResponse(file_path, media_type="video/mp4", filename=safe_name)
+    return stream_file_range(file_path, request)
+
+@app.get("/api/outputs/video/{filename}")
+def stream_output_video(filename: str, request: Request):
+    """Stream browser-compatible H.264 annotated output video with Range seeking."""
+    safe_name = Path(filename).name
+    file_path = OUTPUTS_DIR / safe_name
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Annotated video not found.")
+    return stream_file_range(file_path, request)
+
+@app.get("/api/outputs/latest-video")
+def get_latest_output_video():
+    """Retrieve the latest annotated detection video path and metadata."""
+    if processor.output_video_path:
+        p = OUTPUTS_DIR / processor.output_video_path
+        if p.exists():
+            return {
+                "available": True,
+                "filename": processor.output_video_path,
+                "url": f"/api/outputs/video/{processor.output_video_path}",
+                "size_mb": round(p.stat().st_size / (1024 * 1024), 2)
+            }
+    outputs = sorted(list(OUTPUTS_DIR.glob("*.mp4")), key=lambda x: x.stat().st_mtime, reverse=True)
+    if outputs:
+        latest = outputs[0]
+        return {
+            "available": True,
+            "filename": latest.name,
+            "url": f"/api/outputs/video/{latest.name}",
+            "size_mb": round(latest.stat().st_size / (1024 * 1024), 2)
+        }
+    return {"available": False, "filename": None, "url": None}
 
 @app.get("/api/outputs/csv")
 def download_detections_csv():

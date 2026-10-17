@@ -38,11 +38,16 @@ class VideoProcessor:
         self.lock = threading.Lock()
         
         # Buffer and state tracking
-        self.frame_buffer = RollingFrameBuffer(max_frames=180)
+        self.frame_buffer = RollingFrameBuffer(max_frames=300)
         self.tracker_manager = TrackStateManager()
+        self.latest_frame_jpeg: Optional[bytes] = None
         
         # Pending evidence requests: list of dicts: {"event": EventItem, "end_frame": int}
         self.pending_evidence: List[Dict[str, Any]] = []
+
+    def get_latest_frame(self) -> Optional[bytes]:
+        with self.lock:
+            return self.latest_frame_jpeg
 
     def get_status(self) -> ProcessingStatusResponse:
         with self.lock:
@@ -144,6 +149,8 @@ class VideoProcessor:
 
         pre_frames = int(video_fps * settings.evidence_pre_seconds)
         post_frames = int(video_fps * settings.evidence_post_seconds)
+        buf_size = max(300, int(video_fps * (settings.evidence_pre_seconds + settings.evidence_post_seconds + 5.0)))
+        self.frame_buffer = RollingFrameBuffer(max_frames=buf_size)
         
         frame_idx = 0
         detections_batch = []
@@ -218,6 +225,13 @@ class VideoProcessor:
                 annotated = self._render_full_frame(frame, tracked_detections, zones, video_timestamp, out_w, out_h)
                 writer.write(annotated)
 
+                # Cache frame for live surveillance feed in browser
+                if frame_idx % 2 == 0 or frame_idx == 1:
+                    ret_enc, enc_bytes = cv2.imencode(".jpg", annotated, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
+                    if ret_enc:
+                        with self.lock:
+                            self.latest_frame_jpeg = enc_bytes.tobytes()
+
                 # 9. Record detections batch
                 for d in tracked_detections:
                     detections_batch.append({
@@ -260,10 +274,7 @@ class VideoProcessor:
                 with self.lock:
                     self.total_detections_count += len(detections_batch)
 
-            with self.lock:
-                if self.status != "STOPPED":
-                    self.status = "COMPLETED"
-                self.output_video_path = out_name
+            pass
 
         except Exception as e:
             print(f"[Processor] Exception during processing: {e}")
@@ -273,7 +284,50 @@ class VideoProcessor:
         finally:
             cap.release()
             writer.release()
-            print(f"[Processor] Video processing finished. Status: {self.status}")
+            
+            # Convert OpenCV output video to web-ready H.264 faststart
+            final_h264_name = f"detection_{out_name}"
+            final_h264_path = str(OUTPUTS_DIR / final_h264_name)
+            print(f"[Processor] Converting detection video to web-ready H.264: {final_h264_name}...")
+            converted = self._convert_to_h264(out_path, final_h264_path)
+
+            if converted and os.path.exists(final_h264_path):
+                try:
+                    os.remove(out_path)
+                except Exception:
+                    pass
+                output_final = final_h264_name
+            else:
+                output_final = out_name
+
+            with self.lock:
+                if self.status != "STOPPED" and self.status != "ERROR":
+                    self.status = "COMPLETED"
+                self.output_video_path = output_final
+                self.latest_frame_jpeg = None
+
+            print(f"[Processor] Video processing finished. Output: {output_final} (Status: {self.status})")
+
+    def _convert_to_h264(self, input_path: str, output_path: str) -> bool:
+        """Encode raw output video into browser-playable H.264 via FFmpeg."""
+        import subprocess
+        cmd = [
+            FFMPEG_EXE,
+            "-y",
+            "-i", input_path,
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            "-preset", "veryfast",
+            "-crf", "22",
+            "-movflags", "+faststart",
+            output_path
+        ]
+        try:
+            res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=180)
+            return res.returncode == 0 and os.path.exists(output_path)
+        except Exception as e:
+            print(f"[Processor] H.264 conversion warning: {e}")
+            return False
 
     def _render_full_frame(
         self,
