@@ -1,4 +1,4 @@
-# T225 — Railway Level-Crossing Violation & Track Intrusion Detection System (Rail-Sentinel ROC)
+# Railway Level-Crossing Violation & Track Intrusion Detection System (Rail-Sentinel ROC)
 
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![Ultralytics YOLO](https://img.shields.io/badge/Ultralytics-YOLO11%20%2F%20v8-00FFFF.svg?logo=yolo&logoColor=black)](https://github.com/ultralytics/ultralytics)
