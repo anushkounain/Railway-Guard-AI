@@ -4,6 +4,7 @@ FastAPI Application Entry Point for T225 Railway Safety System.
 
 import os
 import shutil
+import subprocess
 from pathlib import Path
 from typing import List, Optional
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Response, status, Request
@@ -21,6 +22,7 @@ from backend.config import (
     MODELS_DIR,
     DEFAULT_DOWNLOAD_MODEL
 )
+from backend.evidence import FFMPEG_EXE
 from backend.schemas import (
     ZoneModel,
     ZoneListPayload,
@@ -73,76 +75,22 @@ def get_model_info():
 # -------------------------------------------------------------
 
 def stream_file_range(file_path: Path, request: Request):
-    """Serve video files with HTTP 206 Partial Content (Byte Range requests) for smooth browser seeking."""
+    """Serve video files with HTTP 206 Partial Content via Starlette's native FileResponse."""
     if not file_path.is_file():
         raise HTTPException(status_code=404, detail="Video file not found.")
-
-    file_size = file_path.stat().st_size
-    range_header = request.headers.get("range")
-
-    if not range_header:
-        def iter_file():
-            with open(file_path, "rb") as f:
-                while chunk := f.read(1024 * 1024):
-                    yield chunk
-        return StreamingResponse(
-            iter_file(),
-            media_type="video/mp4",
-            headers={
-                "Accept-Ranges": "bytes",
-                "Content-Length": str(file_size)
-            }
-        )
-
-    try:
-        range_val = range_header.replace("bytes=", "").strip()
-        parts = range_val.split("-")
-        start = int(parts[0]) if parts[0] else 0
-        end = int(parts[1]) if len(parts) > 1 and parts[1] else file_size - 1
-        end = min(end, file_size - 1)
-    except Exception:
-        start, end = 0, file_size - 1
-
-    content_length = (end - start) + 1
-
-    def iter_range():
-        with open(file_path, "rb") as f:
-            f.seek(start)
-            remaining = content_length
-            while remaining > 0:
-                chunk_size = min(1024 * 1024, remaining)
-                data = f.read(chunk_size)
-                if not data:
-                    break
-                remaining -= len(data)
-                yield data
-
-    headers = {
-        "Content-Range": f"bytes {start}-{end}/{file_size}",
-        "Accept-Ranges": "bytes",
-        "Content-Length": str(content_length),
-        "Content-Type": "video/mp4"
-    }
-    return StreamingResponse(iter_range(), status_code=206, headers=headers)
+    return FileResponse(
+        str(file_path),
+        media_type="video/mp4",
+        headers={"Accept-Ranges": "bytes"}
+    )
 
 @app.get("/api/videos")
 def list_videos():
-    """List available videos from Downloads and local data folder."""
+    """List available videos from data folder (newest first) and Downloads."""
     videos = []
-    # Check Downloads folder for user video
-    dl_video = r"C:\Users\91636\Downloads\18828999-uhd_4096_2160_60fps.mp4"
-    if os.path.exists(dl_video):
-        size_mb = os.path.getsize(dl_video) / (1024 * 1024)
-        videos.append({
-            "name": "18828999-uhd_4096_2160_60fps.mp4",
-            "path": dl_video,
-            "stream_url": f"/api/videos/stream?path={dl_video}",
-            "size_mb": round(size_mb, 1),
-            "source": "Downloads"
-        })
-
-    # Check data/ folder
-    for f in DATA_DIR.glob("*.mp4"):
+    # Check data/ folder first (sorted newest first)
+    data_files = sorted(list(DATA_DIR.glob("*.mp4")), key=lambda x: x.stat().st_mtime, reverse=True)
+    for f in data_files:
         size_mb = f.stat().st_size / (1024 * 1024)
         videos.append({
             "name": f.name,
@@ -151,11 +99,23 @@ def list_videos():
             "size_mb": round(size_mb, 1),
             "source": "Uploaded"
         })
+
+    # Check Downloads folder for user video
+    dl_video = r"C:\Users\91636\Downloads\18828999-uhd_4096_2160_60fps.mp4"
+    if os.path.exists(dl_video) and not any(v["name"] == Path(dl_video).name for v in videos):
+        size_mb = os.path.getsize(dl_video) / (1024 * 1024)
+        videos.append({
+            "name": "18828999-uhd_4096_2160_60fps.mp4",
+            "path": dl_video,
+            "stream_url": f"/api/videos/stream?path={dl_video}",
+            "size_mb": round(size_mb, 1),
+            "source": "Downloads"
+        })
     return {"videos": videos}
 
 @app.post("/api/videos/upload")
 async def upload_video(file: UploadFile = File(...)):
-    """Upload a new video file securely."""
+    """Upload a new video file securely and ensure web-compatible progressive faststart."""
     if not file.filename.lower().endswith((".mp4", ".avi", ".mov", ".mkv")):
         raise HTTPException(
             status_code=400,
@@ -165,12 +125,28 @@ async def upload_video(file: UploadFile = File(...)):
     # Sanitize filename
     safe_name = Path(file.filename).name
     target_path = DATA_DIR / safe_name
+    temp_target = DATA_DIR / f"temp_{safe_name}"
 
     try:
-        with open(target_path, "wb") as buffer:
+        with open(temp_target, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save video: {e}")
+
+    # Optimize with FFmpeg for progressive browser playback (+faststart)
+    try:
+        res = subprocess.run([
+            FFMPEG_EXE, "-y", "-i", str(temp_target),
+            "-c", "copy", "-movflags", "+faststart",
+            str(target_path)
+        ], capture_output=True, timeout=60)
+        if res.returncode == 0 and target_path.is_file():
+            temp_target.unlink(missing_ok=True)
+        else:
+            temp_target.replace(target_path)
+    except Exception:
+        if temp_target.is_file() and not target_path.is_file():
+            temp_target.replace(target_path)
 
     # Inspect video specs
     cap = cv2.VideoCapture(str(target_path))
@@ -193,7 +169,7 @@ async def upload_video(file: UploadFile = File(...)):
         "duration_sec": round(duration, 2)
     }
 
-@app.get("/api/videos/stream")
+@app.api_route("/api/videos/stream", methods=["GET", "HEAD"])
 def stream_video(request: Request, path: Optional[str] = None, name: Optional[str] = None):
     """Stream raw or uploaded surveillance video with Range headers for HTML5 video seeking."""
     target_path = None
@@ -215,13 +191,13 @@ def stream_video(request: Request, path: Optional[str] = None, name: Optional[st
         if not target_path or not target_path.is_file():
             raise HTTPException(status_code=404, detail="Requested video file not found.")
     else:
-        dl = Path(r"C:\Users\91636\Downloads\18828999-uhd_4096_2160_60fps.mp4")
-        if dl.is_file():
-            target_path = dl
+        mp4s = list(DATA_DIR.glob("*.mp4"))
+        if mp4s:
+            target_path = mp4s[0]
         else:
-            mp4s = list(DATA_DIR.glob("*.mp4"))
-            if mp4s:
-                target_path = mp4s[0]
+            dl = Path(r"C:\Users\91636\Downloads\18828999-uhd_4096_2160_60fps.mp4")
+            if dl.is_file():
+                target_path = dl
             else:
                 raise HTTPException(status_code=404, detail="No video file found to stream.")
 
@@ -379,7 +355,7 @@ def list_evidence():
     clips.sort(key=lambda x: x["created_at"], reverse=True)
     return {"evidence_clips": clips, "count": len(clips)}
 
-@app.get("/api/evidence/{filename}")
+@app.api_route("/api/evidence/{filename}", methods=["GET", "HEAD"])
 def stream_evidence_clip(filename: str, request: Request):
     """Stream evidence video clip with safe path validation and Range seeking."""
     safe_name = Path(filename).name
@@ -388,7 +364,7 @@ def stream_evidence_clip(filename: str, request: Request):
         raise HTTPException(status_code=404, detail="Evidence clip not found")
     return stream_file_range(file_path, request)
 
-@app.get("/api/outputs/video/{filename}")
+@app.api_route("/api/outputs/video/{filename}", methods=["GET", "HEAD"])
 def stream_output_video(filename: str, request: Request):
     """Stream browser-compatible H.264 annotated output video with Range seeking."""
     safe_name = Path(filename).name

@@ -120,6 +120,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadInitialData();
   startStatusPolling();
   await checkLatestOutputVideo();
+  if (state.latestOutputVideo) {
+    loadVideoPreview(null, 'detection');
+  }
 });
 
 async function loadInitialData() {
@@ -174,6 +177,9 @@ function setupEventListeners() {
 
   // Player metadata updates (resolution, duration)
   elements.surveillancePlayer.addEventListener('loadedmetadata', updatePlayerMetadata);
+  elements.surveillancePlayer.addEventListener('error', () => {
+    console.warn('Surveillance Player Error Code:', elements.surveillancePlayer.error ? elements.surveillancePlayer.error.code : 'unknown');
+  });
 
   // Barrier Toggle
   elements.barrierBtns.forEach(btn => {
@@ -255,7 +261,15 @@ function loadVideoPreview(videoPath, mode = 'raw') {
     }
 
     elements.videoEmptyState.classList.add('hidden');
-    const streamUrl = `${API_BASE}/api/videos/stream?path=${encodeURIComponent(target)}`;
+    const matched = state.availableVideos.find(v => v.path === target || v.name === target);
+    const filename = target.split(/[\\/]/).pop();
+    const streamUrl = (matched && matched.stream_url) 
+      ? `${API_BASE}${matched.stream_url}` 
+      : `${API_BASE}/api/videos/stream?name=${encodeURIComponent(filename)}`;
+
+    // Set poster snapshot preview from frame 0
+    elements.surveillancePlayer.poster = `${API_BASE}/api/video-frame?video_path=${encodeURIComponent(target)}&frame_number=0`;
+
     if (elements.surveillancePlayer.getAttribute('data-loaded-src') !== streamUrl) {
       elements.surveillancePlayer.src = streamUrl;
       elements.surveillancePlayer.setAttribute('data-loaded-src', streamUrl);
@@ -271,12 +285,13 @@ function loadVideoPreview(videoPath, mode = 'raw') {
     }
 
     elements.videoEmptyState.classList.add('hidden');
+    elements.surveillancePlayer.removeAttribute('poster');
     const detectionUrl = `${API_BASE}/api/outputs/video/${encodeURIComponent(state.latestOutputVideo)}`;
     if (elements.surveillancePlayer.getAttribute('data-loaded-src') !== detectionUrl) {
       elements.surveillancePlayer.src = detectionUrl;
       elements.surveillancePlayer.setAttribute('data-loaded-src', detectionUrl);
       elements.surveillancePlayer.load();
-      elements.surveillancePlayer.play().catch(() => {});
+      elements.surveillancePlayer.play().catch(e => console.log('Autoplay notice:', e));
     }
   }
 }
